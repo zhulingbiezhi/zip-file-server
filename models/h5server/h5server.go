@@ -5,7 +5,7 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 	"os"
-	"strings"
+	_ "strings"
 )
 
 /*
@@ -41,27 +41,27 @@ func H5server_main(port string, fileSize int) {
 	zipH.ParseZip()
 
 	//准备handle
-	for fileName, file := range zipH.FileDataMap {
-		if file.UncompressedSize64 > 0 {
-			if strings.HasPrefix(fileName, zipH.Prefix) {
-				pattern := "/" + DecodeToGBK(fileName[len(zipH.Prefix):])
+	//	for fileName, file := range zipH.FileDataMap {
+	//		if file.UncompressedSize64 > 0 {
+	//			if strings.HasPrefix(fileName, zipH.Prefix) {
+	//				pattern := "/" + DecodeToGBK(fileName[len(zipH.Prefix):])
 
-				data, err := zipH.ReadFileData(fileName)
-				if err != nil {
-					debugLog.Println("H5server_main---", err, fileName)
-					continue
-				}
-				log.Println("serving", pattern, len(data), "bytes")
-				debugLog.Println("serving", pattern, len(data), "bytes")
-				http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-					log.Println("acquireing " + pattern)
-					debugLog.Println("acquireing " + pattern)
-					w.Write(data)
-					//w.Header().Add("", "")
-				})
-			}
-		}
-	}
+	//				data, err := zipH.ReadFileData(fileName)
+	//				if err != nil {
+	//					debugLog.Println("H5server_main---", err, fileName)
+	//					continue
+	//				}
+	//				log.Println("serving", pattern, len(data), "bytes")
+	//				debugLog.Println("serving", pattern, len(data), "bytes")
+	//				http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+	//					log.Println("acquireing " + pattern)
+	//					debugLog.Println("acquireing " + pattern)
+	//					w.Write(data)
+	//					//w.Header().Add("", "")
+	//				})
+	//			}
+	//		}
+	//	}
 
 	//	//申请一个端口
 	//	httpPort := tcpH.TcpNewPort()
@@ -73,7 +73,7 @@ func H5server_main(port string, fileSize int) {
 	//		tcpH.TcpSend(httpPort)
 	//	}
 
-	err := http.ListenAndServe("127.0.0.1:8088" /*+httpPort*/, nil)
+	err := http.ListenAndServe("127.0.0.1:8088" /*+httpPort*/, &zipH)
 	if err != nil {
 		debugLog.Println("H5server_main---ListenAndServe error---", err)
 		return

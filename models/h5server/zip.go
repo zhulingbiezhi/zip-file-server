@@ -2,9 +2,8 @@ package h5server
 
 import (
 	"archive/zip"
-	_ "bytes"
 	"errors"
-	_ "strconv"
+	"strconv"
 
 	"io/ioutil"
 	"log"
@@ -120,12 +119,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pattern := strings.TrimPrefix(r.URL.Path, "/")
 
 	fileName := this.Prefix + pattern
-	data, err := this.ReadFileData(fileName)
 
-	if err != nil {
-		log.Println("H5server_main---", err, fileName)
-		return
-	}
 	log.Println(r.Header)
 	//	dataRange := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
 	//	rangeList := strings.Split(dataRange, "-")
@@ -134,21 +128,54 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//		startPos, _ = strconv.Atoi(rangeList[0])
 	//	}
 	//log.Println(startPos)
-	sentSize := 0
-	perSize := 1024
-	for sentSize < len(data) {
-		w.Header().Add("Range", "bytes=")
-		copyEnd := sentSize + perSize
-		if copyEnd > len(data) {
-			copyEnd = len(data)
-		}
-		wLen, err := w.Write(data[sentSize:copyEnd])
+	data := make([]byte, 1024*16)
+	if file, ok := this.FileDataMap[fileName]; ok {
+		rc, err := file.Open()
 		if err != nil {
-			log.Println(err)
+			debugLog.Println("zipHandle::ReadFileData---the file read fail---", fileName)
 			return
 		}
-		sentSize += wLen
+
+		sentSize := int64(0)
+		filePos, err := file.DataOffset()
+		for sentSize < int64(file.UncompressedSize64) {
+			rLen, err1 := rc.Read(data)
+
+			debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
+			if err1 != nil {
+				debugLog.Println("zipHandle::ReadFileData---read error", err1, sentSize, rLen, file.Name)
+				break
+			}
+			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
+			w.Header().Add("Range", wStr)
+			wLen, err := w.Write(data[:rLen])
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			sentSize += int64(wLen)
+		}
+
+	} else {
+		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", fileName)
+		return
 	}
+
+	//	sentSize := 0
+	//	perSize := 1024
+	//	for sentSize < len(data) {
+	//		w.Header().Add("Range", "bytes=")
+	//		copyEnd := sentSize + perSize
+	//		if copyEnd > len(data) {
+	//			copyEnd = len(data)
+	//		}
+	//		wLen, err := w.Write(data[sentSize:copyEnd])
+	//		if err != nil {
+	//			log.Println(err)
+	//			return
+	//		}
+	//		sentSize += wLen
+	//	}
 }
 
 func DecodeToGBK(text string) string /*, error*/ {

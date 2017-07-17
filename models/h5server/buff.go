@@ -71,6 +71,7 @@ func (this *fileCache) WaitForWrite() {
 
 	for {
 		recData := <-dataReceiveChan
+		//debugLog.Printf("%p", &recData.data)
 		index := int(recData.startOffset / perCacheSize)
 		debugLog.Println("fileCache::WaitForWrite--", recData.startOffset, recData.endOffset, index)
 
@@ -144,6 +145,7 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 			debugLog.Println("fileCache::ReadData---cachePos", bufInfo.cacheStartOffset, bufInfo.cacheEndOffset, bufInfo.cacheSize)
 			//buffData = this.data[bufInfo.cacheStartOffset : bufInfo.cacheStartOffset+int64(bufInfo.cacheSize)]
 			this.pFile.Seek(bufInfo.cacheStartOffset, 0)
+
 			rLen, err := this.pFile.Read(buffData[:bufInfo.cacheSize])
 			if err != nil {
 				debugLog.Println("fileCache::ReadData---read file error", err)
