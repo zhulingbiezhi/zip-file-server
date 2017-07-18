@@ -144,7 +144,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			rLen, err1 := rc.Read(data)
 			debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
 			if err1 != nil && err1 != io.EOF {
-				debugLog.Println("zipHandle::ReadFileData---read error", err1, sentSize, rLen, file.Name)
+				log.Println("zipHandle::ReadFileData---read error", err1, sentSize, rLen, file.Name)
 				break
 			}
 			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
@@ -160,27 +160,11 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		log.Println(sentSize, file.UncompressedSize64)
+		log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
 	} else {
 		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", fileName)
 		return
 	}
-
-	//	sentSize := 0
-	//	perSize := 1024
-	//	for sentSize < len(data) {
-	//		w.Header().Add("Range", "bytes=")
-	//		copyEnd := sentSize + perSize
-	//		if copyEnd > len(data) {
-	//			copyEnd = len(data)
-	//		}
-	//		wLen, err := w.Write(data[sentSize:copyEnd])
-	//		if err != nil {
-	//			log.Println(err)
-	//			return
-	//		}
-	//		sentSize += wLen
-	//	}
 }
 
 func DecodeToGBK(text string) string /*, error*/ {
