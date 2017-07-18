@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	_ "os"
 
 	"strings"
 
@@ -130,37 +129,47 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//	}
 	//log.Println(startPos)
 
-	data := make([]byte, 512)
 	if file, ok := this.FileDataMap[fileName]; ok {
 		rc, err := file.Open()
 		if err != nil {
-			debugLog.Println("zipHandle::ReadFileData---the file read fail---", fileName)
+			log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
 			return
 		}
-
-		sentSize := int64(0)
-		filePos, err := file.DataOffset()
-		for sentSize < int64(file.UncompressedSize64) {
-			rLen, err1 := rc.Read(data)
-			debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
-			if err1 != nil && err1 != io.EOF {
-				log.Println("zipHandle::ReadFileData---read error", err1, sentSize, rLen, file.Name)
-				break
+		if true {
+			data, err111 := ioutil.ReadAll(rc)
+			if err111 != nil {
+				log.Println(err111, fileName, file.UncompressedSize64)
+				data, _ = ioutil.ReadAll(rc)
 			}
-			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
-			w.Header().Add("Range", wStr)
-			//log.Println(wStr)
-			wLen, err := w.Write(data[:rLen])
-			if err != nil {
-				log.Println(err)
-				return
+			w.Write(data[:])
+		} else {
+			data := make([]byte, 512)
+			debugLog.Println(file.UncompressedSize64, file.Name, pattern)
+			sentSize := int64(0)
+			filePos, _ := file.DataOffset()
+			for sentSize < int64(file.UncompressedSize64) {
+				rLen, err1 := rc.Read(data)
+				//debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
+				if err1 != nil && err1 != io.EOF {
+					debugLog.Println("zipHandle::ReadFileData---read error", err1, rLen, sentSize, file.UncompressedSize64, filePos, file.Name)
+					break
+				}
+				wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
+				w.Header().Add("Range", wStr)
+				//log.Println(wStr)
+				wLen, err := w.Write(data[:rLen])
+				if err != nil {
+					log.Println(err)
+					return
+				}
+				sentSize += int64(wLen)
+				if err1 == io.EOF {
+					break
+				}
 			}
-			sentSize += int64(wLen)
-			if err1 == io.EOF {
-				break
-			}
+			log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
 		}
-		log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
+
 	} else {
 		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", fileName)
 		return

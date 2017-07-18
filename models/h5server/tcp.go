@@ -38,13 +38,13 @@ func (this *h5Tcp) RecvRequest() {
 	for {
 		receiveData := <-dataRequestChan
 		//debugLog.Println(len(receiveData.data))
-		debugLog.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
+		//debugLog.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
 		this.file.Seek(receiveData.startOffset, 0)
 
 		rLen, err := this.file.Read(retData)
 
 		//debugLog.Println(string(retData))
-		debugLog.Println("h5Tcp::RecvRequest---", rLen, len(retData))
+		//debugLog.Println("h5Tcp::RecvRequest---", rLen, len(retData))
 		if err != nil {
 			debugLog.Println("h5Tcp::RecvRequest--", err)
 		} else if rLen != int(receiveData.endOffset-receiveData.startOffset+1) {
