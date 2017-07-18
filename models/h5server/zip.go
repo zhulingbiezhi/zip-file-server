@@ -3,6 +3,7 @@ package h5server
 import (
 	"archive/zip"
 	"errors"
+	"io"
 	"strconv"
 
 	"io/ioutil"
@@ -120,7 +121,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	fileName := this.Prefix + pattern
 
-	log.Println(r.Header)
+	//log.Println(r.Header)
 	//	dataRange := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
 	//	rangeList := strings.Split(dataRange, "-")
 	//	startPos := 0
@@ -128,7 +129,8 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//		startPos, _ = strconv.Atoi(rangeList[0])
 	//	}
 	//log.Println(startPos)
-	data := make([]byte, 1024*16)
+
+	data := make([]byte, 512)
 	if file, ok := this.FileDataMap[fileName]; ok {
 		rc, err := file.Open()
 		if err != nil {
@@ -140,22 +142,25 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		filePos, err := file.DataOffset()
 		for sentSize < int64(file.UncompressedSize64) {
 			rLen, err1 := rc.Read(data)
-
 			debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
-			if err1 != nil {
+			if err1 != nil && err1 != io.EOF {
 				debugLog.Println("zipHandle::ReadFileData---read error", err1, sentSize, rLen, file.Name)
 				break
 			}
 			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
 			w.Header().Add("Range", wStr)
+			//log.Println(wStr)
 			wLen, err := w.Write(data[:rLen])
 			if err != nil {
 				log.Println(err)
 				return
 			}
 			sentSize += int64(wLen)
+			if err1 == io.EOF {
+				break
+			}
 		}
-
+		log.Println(sentSize, file.UncompressedSize64)
 	} else {
 		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", fileName)
 		return

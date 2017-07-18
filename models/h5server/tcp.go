@@ -18,7 +18,7 @@ type h5Tcp struct {
 func (this *h5Tcp) Init(port string, size int64, perReadSize int) (err error) {
 	this.totalSize = size
 	this.perReadSize = perReadSize
-	this.file, _ = os.OpenFile("C:\\Users\\huhai\\Desktop\\zip_test\\new_html\\test_400M.zip", os.O_RDONLY, 0666)
+	this.file, _ = os.OpenFile("C:\\Users\\huhai\\Desktop\\zip_test\\bigdata.zip", os.O_RDONLY, 0666)
 
 	go this.RecvRequest()
 
