@@ -109,7 +109,7 @@ func zipFileTest() {
 	//	}
 	//zipHd.ParseZip()
 
-	err := http.ListenAndServe("127.0.0.1:8088", &zipHd)
+	err := http.ListenAndServe("127.0.0.1:8099", &zipHd)
 	if err != nil {
 		log.Println("H5server_main---ListenAndServe error---", err)
 		return

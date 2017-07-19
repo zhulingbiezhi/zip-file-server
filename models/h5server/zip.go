@@ -5,11 +5,12 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"sync"
 
 	"io/ioutil"
 	"log"
 	"net/http"
-
+	"net/http/pprof"
 	"strings"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -26,6 +27,8 @@ type ZipHandle struct {
 	fileHandle  *fileCache
 	tcpHandle   *h5Tcp
 	FileDataMap map[string]*zip.File
+
+	severMutex *sync.Mutex
 }
 
 func (this *ZipHandle) Init(size int64) {
@@ -41,6 +44,7 @@ func (this *ZipHandle) Init(size int64) {
 	this.FileDataMap = make(map[string]*zip.File)
 	this.totalSize = size
 
+	this.severMutex = new(sync.Mutex)
 }
 
 //func (this *ZipHandle) ZipRecv() {
@@ -115,8 +119,28 @@ func (this *ZipHandle) ReadFileData(name string) ([]byte, error) {
 }
 
 func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	pattern := r.URL.Path
 
-	pattern := strings.TrimPrefix(r.URL.Path, "/")
+	if strings.HasPrefix(pattern, "/debug/pprof/") {
+		pprof.Index(w, r)
+		return
+	} else if strings.HasPrefix(pattern, "/debug/pprof/cmdline") {
+		pprof.Cmdline(w, r)
+		return
+	} else if strings.HasPrefix(pattern, "/debug/pprof/profile") {
+		pprof.Profile(w, r)
+		return
+	} else if strings.HasPrefix(pattern, "/debug/pprof/symbol") {
+		pprof.Symbol(w, r)
+		return
+	} else if strings.HasPrefix(pattern, "/debug/pprof/trace") {
+		pprof.Trace(w, r)
+		return
+	} else if strings.HasSuffix(pattern, "ico") {
+		return
+	}
+
+	pattern = strings.TrimPrefix(r.URL.Path, "/")
 
 	fileName := this.Prefix + pattern
 
@@ -128,14 +152,20 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//		startPos, _ = strconv.Atoi(rangeList[0])
 	//	}
 	//log.Println(startPos)
+	log.Println("zipHandle::ReadFileData---mutex wait", fileName)
+	this.severMutex.Lock()
 
+	defer func() {
+		log.Println("zipHandle::ReadFileData---mutex release", fileName)
+		this.severMutex.Unlock()
+	}()
 	if file, ok := this.FileDataMap[fileName]; ok {
 		rc, err := file.Open()
 		if err != nil {
 			log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
 			return
 		}
-		if true {
+		if false {
 			data, err111 := ioutil.ReadAll(rc)
 			if err111 != nil {
 				log.Println(err111, fileName, file.UncompressedSize64)
@@ -166,6 +196,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if err1 == io.EOF {
 					break
 				}
+				debugLog.Println(file.UncompressedSize64, file.Name, sentSize)
 			}
 			log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
 		}
@@ -177,7 +208,6 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func DecodeToGBK(text string) string /*, error*/ {
-
 	dst := make([]byte, len(text)*2)
 	tr := simplifiedchinese.GB18030.NewDecoder()
 	nDst, _, _ := tr.Transform(dst, []byte(text), true)

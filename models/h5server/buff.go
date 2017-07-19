@@ -6,7 +6,6 @@ import (
 	"os"
 	_ "os"
 	_ "strings"
-	"sync"
 )
 
 type transferInfo struct {
@@ -33,8 +32,6 @@ type fileCache struct {
 	totalSize    int64
 	curFileIndex int
 	pFile        *os.File
-	fileMutex    *sync.Mutex
-	//data         []byte
 	buffMatchMap map[int]*buffInfo
 }
 
@@ -54,6 +51,7 @@ func (this *fileCache) Init(totalSize int64, perCacheSize int) {
 		bufInfo.sizeChan = make(chan int, 1)
 		bufInfo.zipStartOffset = int64(i) * int64(perCacheSize)
 		bufInfo.zipEndOffset = int64(i+1)*int64(perCacheSize) - 1
+		bufInfo.zipIndex = i
 		if bufInfo.zipEndOffset >= this.totalSize {
 			bufInfo.zipEndOffset = this.totalSize - 1
 		}
@@ -65,7 +63,7 @@ func (this *fileCache) Init(totalSize int64, perCacheSize int) {
 		debugLog.Println(err)
 		return
 	}
-	this.fileMutex = new(sync.Mutex)
+
 	go this.WaitForWrite()
 }
 
@@ -87,18 +85,23 @@ func (this *fileCache) WaitForWrite() {
 		if bufInfo.zipStartOffset == recData.startOffset && bufInfo.zipEndOffset == recData.endOffset {
 			cacheStartOffset := int64(this.curFileIndex) * perCacheSize
 			cacheEndOffset := int64(this.curFileIndex+1)*perCacheSize - 1
-			dataLen := len(recData.data)
+			dataLen := recData.endOffset - recData.startOffset + 1
 			//wLen := copy(this.data[cacheStartOffset:cacheStartOffset+int64(dataLen)], recData.data[:])
-			this.fileMutex.Lock()
-			this.pFile.Seek(cacheStartOffset, 0)
+
+			newFilePos, seekErr := this.pFile.Seek(cacheStartOffset, 0)
+			if seekErr != nil {
+				debugLog.Println("WaitForWrite::seek error###", newFilePos, seekErr, bufInfo.cacheStartOffset)
+			} else if newFilePos != cacheStartOffset {
+				debugLog.Println("WaitForWrite::seek newFilePos != bufInfo.cacheStartOffset###", newFilePos, bufInfo.cacheStartOffset)
+			}
 			wLen, err := this.pFile.Write(recData.data[:])
-			this.fileMutex.Unlock()
+
 			if err != nil {
 				debugLog.Println("fileCache::WaitForWrite--write error ", err)
 				bufInfo.sizeChan <- 0
 				break
 			}
-			if wLen != dataLen {
+			if wLen != int(dataLen) {
 				debugLog.Println("fileCache::WaitForWrite--wLen != dataLen", wLen, dataLen)
 				bufInfo.sizeChan <- 0
 				break
@@ -107,7 +110,8 @@ func (this *fileCache) WaitForWrite() {
 			bufInfo.cacheEndOffset = cacheEndOffset
 			bufInfo.cacheSize = wLen
 			bufInfo.bEmpty = false
-			debugLog.Println(bufInfo)
+			bufInfo.cacheIndex = this.curFileIndex
+			//debugLog.Println(bufInfo)
 			bufInfo.sizeChan <- wLen
 
 			//debugLog.Println("fileCache::WaitForWrite--write success---", index, bufInfo.cacheSize, bufInfo.cacheStartOffset, bufInfo.cacheEndOffset, bufInfo.zipStartOffset, bufInfo.zipEndOffset)
@@ -129,14 +133,14 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 	index := int(offset / int64(this.perCacheSize))
 	needSize := len(buf)
 	copyLen := 0
-	debugLog.Println("fileCache::ReadData---need size ====", offset, needSize, this.totalSize)
+	debugLog.Println("fileCache::ReadData---need size ====", needSize, offset, this.totalSize)
 	buffData := make([]byte, this.perCacheSize)
 
 	for needSize > copyLen {
 		if index < this.count {
-
 			bufInfo := this.buffMatchMap[index]
 			size := bufInfo.cacheSize
+
 			if bufInfo.bEmpty {
 				var needInfo transferInfo
 				needInfo.startOffset = bufInfo.zipStartOffset
@@ -150,11 +154,16 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 			}
 			//debugLog.Println("fileCache::ReadData---cachePos", bufInfo.cacheStartOffset, bufInfo.cacheEndOffset, bufInfo.cacheSize)
 			//buffData = this.data[bufInfo.cacheStartOffset : bufInfo.cacheStartOffset+int64(bufInfo.cacheSize)]
-			this.fileMutex.Lock()
-			this.pFile.Seek(bufInfo.cacheStartOffset, 0)
-			rLen, err := this.pFile.Read(buffData[:size])
-			this.fileMutex.Unlock()
 
+			newFilePos, seekErr := this.pFile.Seek(bufInfo.cacheStartOffset, 0)
+			if seekErr != nil {
+				debugLog.Println("ReadData::seek error###", newFilePos, seekErr, bufInfo.cacheStartOffset)
+			} else if newFilePos != bufInfo.cacheStartOffset {
+				debugLog.Println("ReadData::seek newFilePos != bufInfo.cacheStartOffset###", newFilePos, bufInfo.cacheStartOffset)
+			}
+			rLen, err := this.pFile.Read(buffData[:size])
+
+			debugLog.Println(bufInfo, copyLen, rLen)
 			if err != nil {
 				debugLog.Println("fileCache::ReadData---read file error", err)
 				break
@@ -162,12 +171,14 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 			if rLen != size {
 				debugLog.Println("fileCache::ReadData---rLen != bufInfo.cacheSize ", rLen, bufInfo.cacheSize)
 			}
+
 			var cLen int
 			if offset > bufInfo.zipStartOffset {
-				cLen = copy(buf[copyLen:], buffData[offset-bufInfo.zipStartOffset:])
-				debugLog.Println("fileCache::ReadData--offset ", offset, cLen, rLen, "copyLen ", copyLen, bufInfo.zipStartOffset, bufInfo.zipEndOffset, bufInfo.cacheSize)
-
+				cLen = copy(buf[copyLen:], buffData[offset-bufInfo.zipStartOffset:bufInfo.cacheSize])
 			} else {
+				if offset+int64(copyLen) != bufInfo.zipStartOffset {
+					debugLog.Println("fileCache::ReadData---error", offset, copyLen, bufInfo.zipStartOffset)
+				}
 				cLen = copy(buf[copyLen:], buffData[:])
 				if cLen != bufInfo.cacheSize {
 					debugLog.Println("fileCache::ReadData---cLen != cacheSize ", cLen, bufInfo.cacheSize, copyLen, this.perCacheSize)
@@ -175,6 +186,7 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 			}
 
 			copyLen += cLen
+			debugLog.Printf("fileCache::ReadData--offset: %d copyLen: %d rLen: %d zipStartOffset: %d cacheSize: %d \n", offset, copyLen, rLen, bufInfo.zipStartOffset, bufInfo.cacheSize)
 			index++
 		} else {
 			debugLog.Println("fileCache::ReadData---error ", copyLen, needSize)
