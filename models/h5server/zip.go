@@ -5,7 +5,8 @@ import (
 	"errors"
 	"io"
 	"strconv"
-	"sync"
+
+	_ "time"
 
 	"io/ioutil"
 	"log"
@@ -21,14 +22,18 @@ var (
 	dataReceiveChan chan transferInfo
 )
 
-type ZipHandle struct {
-	totalSize   int64
-	Prefix      string
-	fileHandle  *fileCache
-	tcpHandle   *h5Tcp
+type ZipReader struct {
+	bFree       bool
 	FileDataMap map[string]*zip.File
+}
 
-	severMutex *sync.Mutex
+type ZipHandle struct {
+	totalSize  int64
+	Prefix     string
+	fileHandle *fileCache
+	tcpHandle  *h5Tcp
+	readers    []*ZipReader
+	readerMap  map[*ZipReader]string
 }
 
 func (this *ZipHandle) Init(size int64) {
@@ -41,48 +46,72 @@ func (this *ZipHandle) Init(size int64) {
 	this.fileHandle = new(fileCache)
 	this.fileHandle.Init(size, 1024)
 
-	this.FileDataMap = make(map[string]*zip.File)
+	this.readerMap = make(map[*ZipReader]string)
 	this.totalSize = size
-
-	this.severMutex = new(sync.Mutex)
 }
 
-//func (this *ZipHandle) ZipRecv() {
-//	for {
-//		debugLog.Println("zipHandle::ZipRecv---wait for tcp data---", len(this.data), this.totalSize)
-//		shareBytes = <-dataChan
-//		debugLog.Println("zipHandle::ZipRecv---newbuffsucess")
-//		if int64(len(shareBytes)+len(this.data)) > this.totalSize {
-//			diff := int(this.totalSize) - len(this.data)
-//			this.data = append(this.data, shareBytes[:diff]...)
-//		} else {
-//			this.data = append(this.data, shareBytes[:]...)
-//		}
+func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
+	zipReader, err := zip.NewReader(this.fileHandle, this.totalSize)
+	if err != nil {
+		debugLog.Println("zipHandle::GetFileHandle---", err)
+		return nil, err
+	}
+	var zipR *ZipReader
+	zipR = new(ZipReader)
+	zipR.bFree = true
+	zipR.FileDataMap = make(map[string]*zip.File)
 
-//		debugLog.Println("zipHandle::ZipRecv---", len(shareBytes), len(this.data))
-//		if int64(len(this.data)) >= this.totalSize {
-//			debugLog.Println("zipHandle::ZipRecv---recv finished")
-//			break
-//		}
-//	}
-//	successChan <- true
-//}
+	//找index.html
+	for _, file := range zipReader.File {
+		if file.UncompressedSize64 > 0 {
+			fileName := DecodeToGBK(file.Name)
+			zipR.FileDataMap[fileName] = file
 
-func (this *ZipHandle) ParseZip() (err error) { //解析zip包
-	var zipReader *zip.Reader
-	zipReader, err = zip.NewReader(this.fileHandle, this.totalSize)
+		}
+	}
+
+	return zipR, nil
+}
+
+func (this *ZipHandle) OpenFileHandle(fileName string) (*zip.File, error) {
+	for zipReader, _ := range this.readerMap {
+		if zipReader.bFree {
+			this.readerMap[zipReader] = fileName
+			return zipReader.FileDataMap[fileName], nil
+		}
+	}
+	zipNewReader, err := this.makeNewReader()
+	if err != nil {
+		return nil, err
+	}
+	debugLog.Println("new---", zipNewReader.FileDataMap)
+	if _, ok := zipNewReader.FileDataMap[fileName]; !ok {
+		errMap := errors.New("can't find the match fileName")
+		return nil, errMap
+	}
+	zipNewReader.bFree = false
+	this.readerMap[zipNewReader] = fileName
+	return zipNewReader.FileDataMap[fileName], nil
+}
+
+func (this *ZipHandle) ParseZip() error { //解析zip包
+	zipReader, err := zip.NewReader(this.fileHandle, this.totalSize)
 	if err != nil {
 		debugLog.Println("zipHandle::parseZip---", err)
 		return err
 	}
 
+	var zipR *ZipReader
+	zipR = new(ZipReader)
+	zipR.bFree = true
+	zipR.FileDataMap = make(map[string]*zip.File)
 	//找index.html
 	var findIndex bool = false
 	for _, file := range zipReader.File {
 		if file.UncompressedSize64 > 0 {
 			fileName := DecodeToGBK(file.Name)
 			debugLog.Println(fileName)
-			this.FileDataMap[fileName] = file
+			zipR.FileDataMap[fileName] = file
 			fileNameLow := strings.ToLower(fileName)
 			i := strings.Index(fileNameLow, "index.html")
 			if i >= 0 && !findIndex {
@@ -93,29 +122,12 @@ func (this *ZipHandle) ParseZip() (err error) { //解析zip包
 		}
 	}
 	if !findIndex {
-		err = errors.New("can't find the index.html")
-		debugLog.Println("zipHandle::parseZip---", err)
+		err1 := errors.New("can't find the index.html")
+		debugLog.Println("zipHandle::parseZip---", err1)
+		return err1
 	}
-	return
-}
 
-func (this *ZipHandle) ReadFileData(name string) ([]byte, error) {
-	if file, ok := this.FileDataMap[name]; ok {
-		rc, err := file.Open()
-		if err != nil {
-			debugLog.Println("zipHandle::ReadFileData---the file read fail---", name)
-			return nil, err
-		}
-		data, err1 := ioutil.ReadAll(rc)
-		if err1 != nil {
-			debugLog.Println("zipHandle::ReadFileData---readall error:", err1)
-			return nil, err1
-		}
-		return data, nil
-	} else {
-		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", name)
-		return nil, errors.New("the file name is not exit")
-	}
+	return nil
 }
 
 func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -141,69 +153,65 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	pattern = strings.TrimPrefix(r.URL.Path, "/")
-
 	fileName := this.Prefix + pattern
 
-	//log.Println(r.Header)
-	//	dataRange := strings.TrimPrefix(r.Header.Get("Range"), "bytes=")
-	//	rangeList := strings.Split(dataRange, "-")
-	//	startPos := 0
-	//	if len(rangeList) > 0 {
-	//		startPos, _ = strconv.Atoi(rangeList[0])
-	//	}
-	//log.Println(startPos)
+	//log.Println(r.Header, pattern)
 	log.Println("zipHandle::ReadFileData---mutex wait", fileName)
-	this.severMutex.Lock()
+	//this.severMutex.Lock()
 
 	defer func() {
 		log.Println("zipHandle::ReadFileData---mutex release", fileName)
-		this.severMutex.Unlock()
+		//this.severMutex.Unlock()
 	}()
-	if file, ok := this.FileDataMap[fileName]; ok {
-		rc, err := file.Open()
-		if err != nil {
-			log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
-			return
-		}
-		if false {
-			data, err111 := ioutil.ReadAll(rc)
-			if err111 != nil {
-				log.Println(err111, fileName, file.UncompressedSize64)
-				data, _ = ioutil.ReadAll(rc)
-			}
-			w.Write(data[:])
-		} else {
-			data := make([]byte, 512)
-			debugLog.Println(file.UncompressedSize64, file.Name, pattern)
-			sentSize := int64(0)
-			filePos, _ := file.DataOffset()
-			for sentSize < int64(file.UncompressedSize64) {
-				rLen, err1 := rc.Read(data)
-				//debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
-				if err1 != nil && err1 != io.EOF {
-					debugLog.Println("zipHandle::ReadFileData---read error", err1, rLen, sentSize, file.UncompressedSize64, filePos, file.Name)
-					break
-				}
-				wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
-				w.Header().Add("Range", wStr)
-				//log.Println(wStr)
-				wLen, err := w.Write(data[:rLen])
-				if err != nil {
-					log.Println(err)
-					return
-				}
-				sentSize += int64(wLen)
-				if err1 == io.EOF {
-					break
-				}
-				debugLog.Println(file.UncompressedSize64, file.Name, sentSize)
-			}
-			log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
-		}
-
-	} else {
-		debugLog.Println("zipHandle::ReadFileData---the file name is not exit---", fileName)
+	file, errOpen := this.OpenFileHandle(fileName)
+	if errOpen != nil {
+		log.Println("the file OpenFileHandle fail---", errOpen, fileName)
 		return
+	}
+	rc, err := file.Open()
+	if err != nil {
+		log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
+		return
+	}
+	if false {
+		data, err111 := ioutil.ReadAll(rc)
+		if err111 != nil {
+			log.Println(err111, fileName, file.UncompressedSize64)
+			data, _ = ioutil.ReadAll(rc)
+		}
+		w.Write(data[:])
+	} else {
+		data := make([]byte, 512)
+		debugLog.Println(file.UncompressedSize64, file.Name, pattern)
+		sentSize := int64(0)
+		filePos, _ := file.DataOffset()
+		for sentSize < int64(file.UncompressedSize64) {
+			debugLog.Println("ReadData start")
+			rLen, err1 := rc.Read(data)
+			debugLog.Println("ReadData end")
+			//debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
+			if err1 != nil && err1 != io.EOF {
+				debugLog.Println("zipHandle::ReadFileData---read error", err1, rLen, sentSize, file.UncompressedSize64, filePos, file.Name)
+				break
+			}
+			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
+			w.Header().Add("Range", wStr)
+			//log.Println(wStr)
+			debugLog.Println("WriteData start", rLen, len(data))
+			//debugLog.Println(data)
+			wLen, err := w.Write(data[:rLen])
+			debugLog.Println("WriteData end")
+			if err != nil {
+				log.Println(err)
+				return
+			}
+			sentSize += int64(wLen)
+			if err1 == io.EOF {
+				break
+			}
+			debugLog.Println(file.UncompressedSize64, file.Name, sentSize)
+		}
+		log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
 	}
 }
 

@@ -3,6 +3,7 @@ package h5server
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"os"
 	_ "strings"
@@ -73,7 +74,15 @@ func H5server_main(port string, fileSize int) {
 	//		tcpH.TcpSend(httpPort)
 	//	}
 
-	err := http.ListenAndServe("127.0.0.1:8099" /*+httpPort*/, &zipH)
+	srv := &http.Server{
+		Handler:      &zipH,
+		Addr:         "127.0.0.1:8099",
+		WriteTimeout: time.Minute * 5,
+		ReadTimeout:  time.Minute * 5,
+	}
+	err := srv.ListenAndServe() //设置监听的端口
+
+	//err := http.ListenAndServe("127.0.0.1:8099" /*+httpPort*/, &zipH)
 	if err != nil {
 		debugLog.Println("H5server_main---ListenAndServe error---", err)
 		return
