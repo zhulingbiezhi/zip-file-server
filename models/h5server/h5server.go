@@ -77,8 +77,8 @@ func H5server_main(port string, fileSize int) {
 	srv := &http.Server{
 		Handler:      &zipH,
 		Addr:         "127.0.0.1:8099",
-		WriteTimeout: time.Minute * 5,
-		ReadTimeout:  time.Minute * 5,
+		WriteTimeout: time.Second * 5,
+		ReadTimeout:  time.Second * 5,
 	}
 	err := srv.ListenAndServe() //设置监听的端口
 

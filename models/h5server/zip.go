@@ -4,7 +4,8 @@ import (
 	"archive/zip"
 	"errors"
 	"io"
-	"strconv"
+	_ "strconv"
+	"sync"
 
 	_ "time"
 
@@ -32,8 +33,8 @@ type ZipHandle struct {
 	Prefix     string
 	fileHandle *fileCache
 	tcpHandle  *h5Tcp
-	readers    []*ZipReader
 	readerMap  map[*ZipReader]string
+	severMutex *sync.Mutex
 }
 
 func (this *ZipHandle) Init(size int64) {
@@ -48,6 +49,8 @@ func (this *ZipHandle) Init(size int64) {
 
 	this.readerMap = make(map[*ZipReader]string)
 	this.totalSize = size
+
+	this.severMutex = new(sync.Mutex)
 }
 
 func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
@@ -66,7 +69,6 @@ func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
 		if file.UncompressedSize64 > 0 {
 			fileName := DecodeToGBK(file.Name)
 			zipR.FileDataMap[fileName] = file
-
 		}
 	}
 
@@ -157,11 +159,10 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	//log.Println(r.Header, pattern)
 	log.Println("zipHandle::ReadFileData---mutex wait", fileName)
-	//this.severMutex.Lock()
-
+	this.severMutex.Lock()
 	defer func() {
+		this.severMutex.Unlock()
 		log.Println("zipHandle::ReadFileData---mutex release", fileName)
-		//this.severMutex.Unlock()
 	}()
 	file, errOpen := this.OpenFileHandle(fileName)
 	if errOpen != nil {
@@ -173,7 +174,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
 		return
 	}
-	if false {
+	if true {
 		data, err111 := ioutil.ReadAll(rc)
 		if err111 != nil {
 			log.Println(err111, fileName, file.UncompressedSize64)
@@ -182,25 +183,18 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write(data[:])
 	} else {
 		data := make([]byte, 512)
-		debugLog.Println(file.UncompressedSize64, file.Name, pattern)
+		//debugLog.Println(file.UncompressedSize64, file.Name, pattern)
 		sentSize := int64(0)
 		filePos, _ := file.DataOffset()
 		for sentSize < int64(file.UncompressedSize64) {
-			debugLog.Println("ReadData start")
 			rLen, err1 := rc.Read(data)
-			debugLog.Println("ReadData end")
-			//debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
 			if err1 != nil && err1 != io.EOF {
 				debugLog.Println("zipHandle::ReadFileData---read error", err1, rLen, sentSize, file.UncompressedSize64, filePos, file.Name)
 				break
 			}
-			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
-			w.Header().Add("Range", wStr)
-			//log.Println(wStr)
-			debugLog.Println("WriteData start", rLen, len(data))
-			//debugLog.Println(data)
+			//			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
+			//			w.Header().Add("Range", wStr)
 			wLen, err := w.Write(data[:rLen])
-			debugLog.Println("WriteData end")
 			if err != nil {
 				log.Println(err)
 				return
@@ -219,9 +213,5 @@ func DecodeToGBK(text string) string /*, error*/ {
 	dst := make([]byte, len(text)*2)
 	tr := simplifiedchinese.GB18030.NewDecoder()
 	nDst, _, _ := tr.Transform(dst, []byte(text), true)
-	//	if err != nil {
-	//		return text, err
-	//	}
-
 	return string(dst[:nDst] /*, nil*/)
 }
