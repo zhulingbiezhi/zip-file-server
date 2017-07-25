@@ -3,10 +3,11 @@ package h5server
 import (
 	"log"
 	"net/http"
-	"time"
-
 	"os"
 	_ "strings"
+	"time"
+
+	"../../utils"
 )
 
 /*
@@ -38,51 +39,20 @@ func init() {
 func H5server_main(port string, fileSize int) {
 
 	var zipH ZipHandle
-	zipH.Init(int64(fileSize))
-	zipH.ParseZip()
-
-	//准备handle
-	//	for fileName, file := range zipH.FileDataMap {
-	//		if file.UncompressedSize64 > 0 {
-	//			if strings.HasPrefix(fileName, zipH.Prefix) {
-	//				pattern := "/" + DecodeToGBK(fileName[len(zipH.Prefix):])
-
-	//				data, err := zipH.ReadFileData(fileName)
-	//				if err != nil {
-	//					debugLog.Println("H5server_main---", err, fileName)
-	//					continue
-	//				}
-	//				log.Println("serving", pattern, len(data), "bytes")
-	//				debugLog.Println("serving", pattern, len(data), "bytes")
-	//				http.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-	//					log.Println("acquireing " + pattern)
-	//					debugLog.Println("acquireing " + pattern)
-	//					w.Write(data)
-	//					//w.Header().Add("", "")
-	//				})
-	//			}
-	//		}
-	//	}
-
-	//	//申请一个端口
-	//	httpPort := tcpH.TcpNewPort()
-	//	if len(httpPort) <= 0 {
-	//		tcpH.TcpSend("the port is illegal")
-	//		return
-	//	} else {
-	//		debugLog.Println("server port : " + httpPort)
-	//		tcpH.TcpSend(httpPort)
-	//	}
-
+	zipH.Init(port, int64(fileSize))
+	errParse := zipH.ParseZip()
+	if errParse != nil {
+		return
+	}
+	newPort := utils.TcpNewPort()
+	log.Println(newPort)
 	srv := &http.Server{
 		Handler:      &zipH,
-		Addr:         "127.0.0.1:8099",
+		Addr:         "127.0.0.1:" + newPort,
 		WriteTimeout: time.Second * 5,
 		ReadTimeout:  time.Second * 5,
 	}
 	err := srv.ListenAndServe() //设置监听的端口
-
-	//err := http.ListenAndServe("127.0.0.1:8099" /*+httpPort*/, &zipH)
 	if err != nil {
 		debugLog.Println("H5server_main---ListenAndServe error---", err)
 		return
