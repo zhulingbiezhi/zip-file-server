@@ -148,7 +148,7 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 				var needInfo transferInfo
 				needInfo.startOffset = bufInfo.zipStartOffset
 				needInfo.endOffset = bufInfo.zipEndOffset
-				//debugLog.Println("fileCache::ReadData---need", needInfo.startOffset, needInfo.endOffset)
+				debugLog.Println("fileCache::ReadData---need ", index, needInfo.startOffset, needInfo.endOffset)
 				dataRequestChan <- needInfo
 				size = <-this.buffMatchMap[index].sizeChan
 				bufInfo.buffMutex.Unlock()

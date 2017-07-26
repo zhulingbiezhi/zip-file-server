@@ -39,13 +39,15 @@ func init() {
 func H5server_main(port string, fileSize int) {
 
 	var zipH ZipHandle
-	zipH.Init(port, int64(fileSize))
+	zipH.Init(port, int64(fileSize), 16*1024)
 	errParse := zipH.ParseZip()
 	if errParse != nil {
 		return
 	}
 	newPort := utils.TcpNewPort()
-	log.Println(newPort)
+	url := "http://127.0.0.1:" + newPort
+	zipH.TcpSendData("url:" + url)
+	log.Println(url)
 	srv := &http.Server{
 		Handler:      &zipH,
 		Addr:         "127.0.0.1:" + newPort,

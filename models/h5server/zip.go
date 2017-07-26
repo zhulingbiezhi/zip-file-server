@@ -37,20 +37,24 @@ type ZipHandle struct {
 	severMutex *sync.Mutex
 }
 
-func (this *ZipHandle) Init(port string, size int64) {
+func (this *ZipHandle) Init(port string, size int64, sectionSize int) {
 	dataRequestChan = make(chan transferInfo, 1)
 	dataReceiveChan = make(chan transferInfo, 1)
 
 	this.tcpHandle = new(h5Tcp)
-	this.tcpHandle.Init(port, 1024)
+	this.tcpHandle.Init(port, sectionSize)
 
 	this.fileHandle = new(fileCache)
-	this.fileHandle.Init(size, 1024)
+	this.fileHandle.Init(size, sectionSize)
 
 	this.readerMap = make(map[*ZipReader]string)
 	this.totalSize = size
 
 	this.severMutex = new(sync.Mutex)
+}
+
+func (this *ZipHandle) TcpSendData(data string) {
+	this.tcpHandle.TcpSend(data)
 }
 
 func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
@@ -159,10 +163,9 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	//log.Println(r.Header, pattern)
 	debugLog.Println("zipHandle::ReadFileData---mutex wait", fileName)
-	//this.severMutex
-	//this.severMutex.Lock()
+	this.severMutex.Lock()
 	defer func() {
-		//this.severMutex.Unlock()
+		this.severMutex.Unlock()
 		debugLog.Println("zipHandle::ReadFileData---mutex release", fileName)
 	}()
 	file, errOpen := this.OpenFileHandle(fileName)
@@ -175,7 +178,7 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
 		return
 	}
-	log.Println(r.Header)
+	//log.Println(r.Header)
 	if true {
 		if file.UncompressedSize64 > 10*1024*1024 {
 			log.Println("big file", fileName, file.UncompressedSize64)

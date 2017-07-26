@@ -30,10 +30,7 @@ type h5Tcp struct {
 }
 
 func (this *h5Tcp) Init(port string, perReadSize int) (err error) {
-	//this.totalSize = size
 	this.perReadSize = perReadSize
-	//this.file, _ = os.OpenFile("C:\\Users\\huhai\\Desktop\\zip_test\\bigdata.zip", os.O_RDONLY, 0666)
-
 	this.conn, err = net.Dial("tcp", "127.0.0.1:"+port)
 
 	if err != nil {
@@ -50,7 +47,7 @@ func (this *h5Tcp) RecvRequest() {
 	var sendTcpData TcpData
 	for {
 		receiveData := <-dataRequestChan
-		//log.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
+		debugLog.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
 
 		sendTcpData.StartOffset = receiveData.startOffset
 		sendTcpData.EndOffset = receiveData.endOffset
