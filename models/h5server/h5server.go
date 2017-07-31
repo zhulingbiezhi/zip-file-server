@@ -39,7 +39,7 @@ func init() {
 func H5server_main(port string, fileSize int) {
 
 	var zipH ZipHandle
-	zipH.Init(port, int64(fileSize), 16*1024)
+	zipH.Init(port, int64(fileSize), 64*1024)
 	errParse := zipH.ParseZip()
 	if errParse != nil {
 		return

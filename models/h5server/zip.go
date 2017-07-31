@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"errors"
 	"io"
-	_ "strconv"
+
 	"sync"
 
 	_ "time"
@@ -33,8 +33,10 @@ type ZipHandle struct {
 	Prefix     string
 	fileHandle *fileCache
 	tcpHandle  *h5Tcp
+	mainReader *ZipReader
 	readerMap  map[*ZipReader]string
 	severMutex *sync.Mutex
+	bigMutex   *sync.Mutex
 }
 
 func (this *ZipHandle) Init(port string, size int64, sectionSize int) {
@@ -51,10 +53,15 @@ func (this *ZipHandle) Init(port string, size int64, sectionSize int) {
 	this.totalSize = size
 
 	this.severMutex = new(sync.Mutex)
+	this.bigMutex = new(sync.Mutex)
 }
 
 func (this *ZipHandle) TcpSendData(data string) {
 	this.tcpHandle.TcpSend(data)
+}
+
+func (this *ZipHandle) MainFileHandle(fileName string) *zip.File {
+	return this.mainReader.FileDataMap[fileName]
 }
 
 func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
@@ -132,7 +139,7 @@ func (this *ZipHandle) ParseZip() error { //解析zip包
 		debugLog.Println("zipHandle::parseZip---", err1)
 		return err1
 	}
-
+	this.mainReader = zipR
 	return nil
 }
 
@@ -161,66 +168,88 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pattern = strings.TrimPrefix(r.URL.Path, "/")
 	fileName := this.Prefix + pattern
 
-	//log.Println(r.Header, pattern)
-	debugLog.Println("zipHandle::ReadFileData---mutex wait", fileName)
-	this.severMutex.Lock()
-	defer func() {
-		this.severMutex.Unlock()
-		debugLog.Println("zipHandle::ReadFileData---mutex release", fileName)
-	}()
-	file, errOpen := this.OpenFileHandle(fileName)
-	if errOpen != nil {
-		log.Println("the file OpenFileHandle fail---", errOpen, fileName)
-		return
-	}
-	rc, err := file.Open()
-	if err != nil {
-		log.Println("zipHandle::ReadFileData---the file open fail---", err, fileName, file.UncompressedSize64)
-		return
-	}
-	//log.Println(r.Header)
-	if true {
-		if file.UncompressedSize64 > 10*1024*1024 {
-			log.Println("big file", fileName, file.UncompressedSize64)
-			//return
-		}
-		data, err111 := ioutil.ReadAll(rc)
-		if err111 != nil {
-			log.Println(err111, fileName, file.UncompressedSize64)
-			data, _ = ioutil.ReadAll(rc)
-		}
-		w.Write(data[:])
-	} else {
-		data := make([]byte, 512)
-		//debugLog.Println(file.UncompressedSize64, file.Name, pattern)
-		sentSize := int64(0)
-		filePos, _ := file.DataOffset()
-		for sentSize < int64(file.UncompressedSize64) {
-			rLen, err1 := rc.Read(data)
-			if err1 != nil && err1 != io.EOF {
-				debugLog.Println("zipHandle::ReadFileData---read error", err1, rLen, sentSize, file.UncompressedSize64, filePos, file.Name)
-				break
-			}
-			//			wStr := "bytes=" + strconv.FormatInt(sentSize, 10) + "-" /* + strconv.FormatInt(sentSize+1024, 10)*/
-			//			w.Header().Add("Range", wStr)
-			wLen, err := w.Write(data[:rLen])
-			if err != nil {
-				log.Println(err)
-				return
-			}
-			sentSize += int64(wLen)
-			if err1 == io.EOF {
-				break
-			}
-			debugLog.Println(file.UncompressedSize64, file.Name, sentSize)
-		}
-		log.Println(sentSize, file.UncompressedSize64, file.Name, pattern)
-	}
-}
+	file := this.MainFileHandle(fileName)
 
+	//if r.Header.Get("Range") == "" {
+
+	this.DealWithNormalFile(w, file)
+
+	//	} else {
+	//		debugLog.Println("the range --- ", r.Header.Get("Range"), pattern)
+	//		this.DealWithRangeFile(w, file)
+
+	//	}
+}
 func DecodeToGBK(text string) string /*, error*/ {
 	dst := make([]byte, len(text)*2)
 	tr := simplifiedchinese.GB18030.NewDecoder()
 	nDst, _, _ := tr.Transform(dst, []byte(text), true)
 	return string(dst[:nDst] /*, nil*/)
+}
+
+func (this *ZipHandle) DealWithNormalFile(w http.ResponseWriter, file *zip.File) {
+	debugLog.Println("zipHandle::DealWithNormalFile---mutex wait", file.Name)
+	this.severMutex.Lock()
+	defer func() {
+		this.severMutex.Unlock()
+		debugLog.Println("zipHandle::DealWithNormalFile---mutex release", file.Name)
+	}()
+	rc, err := file.Open()
+	if err != nil {
+		debugLog.Println("zipHandle::DealWithNormalFile---the file open fail---", err, file.Name, file.UncompressedSize64)
+		return
+	}
+
+	data, err111 := ioutil.ReadAll(rc)
+	if err111 != nil {
+		debugLog.Println(err111, file.Name, file.UncompressedSize64)
+		return
+	}
+
+	w.Write(data[:])
+	rc.Close()
+}
+
+func (this *ZipHandle) DealWithRangeFile(w http.ResponseWriter, file *zip.File) {
+	this.bigMutex.Lock()
+	rc, err := file.Open()
+	if err != nil {
+		log.Println("zipHandle::DealWithNormalFile---the file open fail---", err, file.Name, file.UncompressedSize64)
+		return
+	}
+
+	data := make([]byte, 1024*32)
+	sentSize := int64(0)
+
+	for sentSize < int64(file.UncompressedSize64) {
+		//debugLog.Println("ReadData start")
+		debugLog.Println("zipHandle::DealWithRangeFile---big mutex", file.Name)
+		this.severMutex.Lock()
+		rLen, err1 := rc.Read(data)
+		//debugLog.Println("ReadData end")
+		//debugLog.Println("zipHandle::ReadFileData---read length ", rLen, file.UncompressedSize64, filePos, file.Name)
+		if err1 != nil && err1 != io.EOF {
+			debugLog.Println("zipHandle::DealWithRangeFile---read error", err1, rLen, sentSize, file.UncompressedSize64, file.Name)
+			break
+		}
+		//debugLog.Println("WriteData start", rLen, len(data))
+		wLen, err := w.Write(data[:rLen])
+		//debugLog.Println("WriteData end")
+		if err != nil {
+			debugLog.Println(err)
+			break
+		}
+		sentSize += int64(wLen)
+
+		debugLog.Println(file.UncompressedSize64, file.Name, sentSize)
+		if err1 == io.EOF {
+			break
+		}
+		this.severMutex.Unlock()
+		debugLog.Println("zipHandle::DealWithRangeFile---big mutex", file.Name)
+	}
+	this.severMutex.Unlock()
+	rc.Close()
+	debugLog.Println("zipHandle::ReadFinished ---", sentSize, file.UncompressedSize64, file.Name)
+	this.bigMutex.Unlock()
 }
