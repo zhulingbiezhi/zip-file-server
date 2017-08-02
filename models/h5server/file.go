@@ -36,6 +36,7 @@ type fileCache struct {
 	filePath     string
 	pFile        *os.File
 	fileMutex    *sync.Mutex
+	readMutex    *sync.Mutex
 	buffMatchMap map[int]*buffInfo
 }
 
@@ -46,6 +47,7 @@ func (this *fileCache) Init(totalSize int64, perCacheSize int) {
 	this.filePath = "d:\\temp.zip"
 	this.buffMatchMap = make(map[int]*buffInfo)
 	this.fileMutex = new(sync.Mutex)
+	this.readMutex = new(sync.Mutex)
 	this.count = int(this.totalSize / int64(perCacheSize))
 	if this.totalSize%int64(perCacheSize) != 0 {
 		this.count += 1
@@ -134,7 +136,7 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 	index := int(offset / int64(this.perCacheSize))
 	needSize := len(buf)
 	copyLen := 0
-	debugLog.Println("fileCache::ReadData---need size ====", needSize, offset, this.totalSize)
+	//debugLog.Println("fileCache::ReadData---need size ====", needSize, offset, this.totalSize)
 	buffData := make([]byte, this.perCacheSize)
 
 	for needSize > copyLen {
@@ -148,9 +150,11 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 				var needInfo transferInfo
 				needInfo.startOffset = bufInfo.zipStartOffset
 				needInfo.endOffset = bufInfo.zipEndOffset
-				debugLog.Println("fileCache::ReadData---need ", index, needInfo.startOffset, needInfo.endOffset)
-				dataRequestChan <- needInfo
-				size = <-this.buffMatchMap[index].sizeChan
+				//debugLog.Println("fileCache::ReadData---need ", index, needInfo.startOffset, needInfo.endOffset)
+				if bufInfo.bEmpty {
+					dataRequestChan <- needInfo
+					size = <-this.buffMatchMap[index].sizeChan
+				}
 				bufInfo.buffMutex.Unlock()
 				if size == 0 {
 					return copyLen, errors.New("this.buffMatchMap[index].sizeChan == 0")
@@ -185,19 +189,19 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 				}
 				cLen = copy(buf[copyLen:], buffData[:])
 				if cLen != bufInfo.cacheSize {
-					debugLog.Println("fileCache::ReadData---cLen != cacheSize ", cLen, bufInfo.cacheSize, copyLen, this.perCacheSize)
+					//debugLog.Println("fileCache::ReadData---cLen != cacheSize ", cLen, bufInfo.cacheSize, copyLen, this.perCacheSize)
 				}
 			}
 			//this.buffMatchMap[index].buffMutex.Unlock()
 			copyLen += cLen
-			debugLog.Printf("fileCache::ReadData--offset: %d copyLen: %d rLen: %d zipStartOffset: %d cacheSize: %d \n", offset, copyLen, rLen, bufInfo.zipStartOffset, bufInfo.cacheSize)
+			//debugLog.Printf("fileCache::ReadData--offset: %d copyLen: %d rLen: %d zipStartOffset: %d cacheSize: %d \n", offset, copyLen, rLen, bufInfo.zipStartOffset, bufInfo.cacheSize)
 			index++
 		} else {
 			debugLog.Println("fileCache::ReadData---error ", copyLen, needSize)
 			break
 		}
 	}
-	debugLog.Println("fileCache::ReadData---read finished#####", copyLen, offset)
+	//debugLog.Println("fileCache::ReadData---read finished#####", copyLen, offset)
 	return copyLen, nil
 }
 
@@ -236,6 +240,8 @@ func (this *fileCache) ReadData(buf []byte, offset int64) (n int, err error) {
 //}
 
 func (this *fileCache) ReadAt(b []byte, off int64) (int, error) {
+	this.readMutex.Lock()
+	defer this.readMutex.Unlock()
 	if off < 0 {
 		return 0, errors.New("bytes.Reader.ReadAt: negative offset")
 	}
