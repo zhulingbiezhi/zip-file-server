@@ -63,7 +63,7 @@ func (this *mediaFiles) ReadData(name string, offset int, data []byte) (int, err
 		if offset+needLen > zipFInfo.fileSize {
 			needLen = zipFInfo.fileSize - offset
 		}
-		zipFInfo.onlyMutex.Lock()
+		zipFInfo.onlyMutex.Lock() //同一个文件请求同一位置会导致阻塞
 		if zipFInfo.realSize < offset+needLen {
 			zipFInfo.bWait = true
 			debugLog.Println("wait for pos---", offset, needLen, zipFInfo.realSize)
