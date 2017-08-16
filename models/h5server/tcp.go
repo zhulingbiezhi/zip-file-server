@@ -47,7 +47,7 @@ func (this *h5Tcp) RecvRequest() {
 	var sendTcpData TcpData
 	for {
 		receiveData := <-dataRequestChan
-		debugLog.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
+		//debugLog.Println("h5Tcp::RecvRequest---", receiveData.startOffset, receiveData.endOffset)
 
 		sendTcpData.StartOffset = receiveData.startOffset
 		sendTcpData.EndOffset = receiveData.endOffset

@@ -29,6 +29,7 @@ type mediaFiles struct {
 func (this *mediaFiles) Init() {
 	this.filesMap = make(map[string]*zipFileInfo)
 	this.fileMutex = new(sync.Mutex)
+
 	this.filePath = "d:\\medias"
 	this.totalSize = 0
 	var err error
@@ -38,13 +39,8 @@ func (this *mediaFiles) Init() {
 	}
 }
 
-func (this *mediaFiles) AddParse(file *zip.File) bool {
-	for fileName := range this.filesMap {
-		if fileName == file.Name {
-			debugLog.Println("the name is exist---", fileName)
-			return true
-		}
-	}
+func (this *mediaFiles) AddParse(file *zip.File) {
+	debugLog.Println("AddParse---", file.Name)
 	zipFInfo := new(zipFileInfo)
 	zipFInfo.fileOffset = this.totalSize
 	zipFInfo.realSizeChan = make(chan int, 1)
@@ -53,6 +49,15 @@ func (this *mediaFiles) AddParse(file *zip.File) bool {
 	zipFInfo.onlyMutex = new(sync.Mutex)
 	this.totalSize = zipFInfo.fileOffset + int(file.UncompressedSize64)
 	this.filesMap[file.Name] = zipFInfo
+}
+
+func (this *mediaFiles) FindParse(name string) bool {
+	for fileName := range this.filesMap {
+		if fileName == name {
+			debugLog.Println("the name is exist---", fileName)
+			return true
+		}
+	}
 	return false
 }
 
@@ -133,12 +138,12 @@ func (this *mediaFiles) ParseFile(file *zip.File) {
 		}
 		writenSize += wLen
 
-		debugLog.Println(file.Name, writenSize, file.UncompressedSize64)
+		//debugLog.Println(file.Name, writenSize, file.UncompressedSize64)
 		select {
 		case zipFInfo.realSizeChan <- writenSize:
 			debugLog.Println("zipFInfo.realSizeChan <-", writenSize, file.Name, file.UncompressedSize64)
 		default:
-			debugLog.Println("ignore pos---", writenSize)
+			//debugLog.Println("ignore pos---", writenSize)
 		}
 		if err1 == io.EOF {
 			break

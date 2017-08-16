@@ -37,7 +37,7 @@ type ZipHandle struct {
 	mainReader  *ZipReader
 	readerMap   map[*ZipReader]string
 	severMutex  *sync.Mutex
-	bigMutex    *sync.Mutex
+	handleMutex *sync.Mutex
 }
 
 func (this *ZipHandle) Init(port string, size int64, sectionSize int) {
@@ -57,7 +57,7 @@ func (this *ZipHandle) Init(port string, size int64, sectionSize int) {
 	this.totalSize = size
 
 	this.severMutex = new(sync.Mutex)
-	this.bigMutex = new(sync.Mutex)
+	this.handleMutex = new(sync.Mutex)
 }
 
 func (this *ZipHandle) TcpSendData(data string) {
@@ -90,28 +90,38 @@ func (this *ZipHandle) makeNewReader() (*ZipReader, error) {
 	return zipR, nil
 }
 
-func (this *ZipHandle) OpenFileHandle(fileName string) (*zip.File, error) {
-	for zipReader, _ := range this.readerMap {
-		if zipReader.bFree {
-			this.readerMap[zipReader] = fileName
-			return zipReader.FileDataMap[fileName], nil
+func (this *ZipHandle) NewFileHandle(fileName string) (*zip.File, error) {
+	this.handleMutex.Lock()
+	defer this.handleMutex.Unlock()
+	if bFind := this.mediaHandle.FindParse(fileName); bFind {
+		for zipR, name := range this.readerMap {
+			if name == fileName {
+				return zipR.FileDataMap[fileName], nil
+			}
 		}
+		debugLog.Println("can't find the match name")
 	}
+
 	zipNewReader, err := this.makeNewReader()
 	if err != nil {
 		return nil, err
 	}
-	debugLog.Println("new---", fileName)
-	if _, ok := zipNewReader.FileDataMap[fileName]; !ok {
+	//debugLog.Println("new---", fileName)
+	if file, ok := zipNewReader.FileDataMap[fileName]; !ok {
 		errMap := errors.New("can't find the match fileName")
 		return nil, errMap
+	} else {
+		debugLog.Println("start ParseFile---", file.Name)
+		this.mediaHandle.AddParse(file)
+		go this.mediaHandle.ParseFile(file)
 	}
+
 	zipNewReader.bFree = false
 	this.readerMap[zipNewReader] = fileName
 	return zipNewReader.FileDataMap[fileName], nil
 }
 
-func (this *ZipHandle) ParseZip() error { //解析zip包
+func (this *ZipHandle) GetParseInfo() error { //解析zip包
 	zipReader, err := zip.NewReader(this.fileHandle, this.totalSize)
 	if err != nil {
 		debugLog.Println("zipHandle::parseZip---", err)
@@ -172,18 +182,24 @@ func (this *ZipHandle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pattern = strings.TrimPrefix(r.URL.Path, "/")
 	fileName := this.Prefix + pattern
 
-	if r.Header.Get("Range") == "" {
+	strRange := r.Header.Get("Range")
+	if (strings.HasSuffix(pattern, ".mp4") || strings.HasSuffix(pattern, ".mp3")) && strRange == "" {
+		strRange = "bytes=0-"
+	}
+
+	if strRange == "" {
 		file := this.MainFileHandle(fileName)
 		this.DealWithNormalFile(w, file)
 
 	} else {
-		debugLog.Println("the range --- ", r.Header.Get("Range"), pattern)
-		bigFile, err := this.OpenFileHandle(fileName)
+		debugLog.Println("the range --- ", strRange, pattern)
+		bigFile, err := this.NewFileHandle(fileName)
 		if err == nil {
-			this.DealWithRangeFile(w, r, bigFile)
+			strRange = strRange[6:]
+			debugLog.Println("hello")
+			this.DealWithRangeFile(w, strRange, bigFile)
 		} else {
-			debugLog.Println(err)
-			return
+			debugLog.Println("ServeHTTP error---", err, fileName)
 		}
 	}
 }
@@ -213,33 +229,25 @@ func (this *ZipHandle) DealWithNormalFile(w http.ResponseWriter, file *zip.File)
 		debugLog.Println(err111, file.Name, file.UncompressedSize64)
 		return
 	}
-
 	w.Write(data[:])
 }
 
-func (this *ZipHandle) DealWithRangeFile(w http.ResponseWriter, r *http.Request, file *zip.File) {
-	if bExist := this.mediaHandle.AddParse(file); !bExist {
-		debugLog.Println("start ParseFile---", file.Name)
-		go this.mediaHandle.ParseFile(file)
-	}
-
-	strRange := r.Header.Get("Range")[6:]
-
-	//debugLog.Println(strRange)
+func (this *ZipHandle) DealWithRangeFile(w http.ResponseWriter, strRange string, file *zip.File) {
+	debugLog.Println("strRange ---", strRange, file.Name)
 	posArr := strings.Split(strRange, "-")
-	startPos := 0
-	endPos := 0
-
+	startPos := -1
+	endPos := -1
 	maxReadSize := 64 * 1024
-	if len(posArr) == 1 {
-		startPos, _ = strconv.Atoi(posArr[0])
 
-	} else if len(posArr) == 2 {
-		startPos, _ = strconv.Atoi(posArr[0])
-		endPos, _ = strconv.Atoi(posArr[1])
+	for _, strPos := range posArr {
+		if startPos == -1 {
+			startPos, _ = strconv.Atoi(strPos)
+		} else if endPos == -1 {
+			endPos, _ = strconv.Atoi(strPos)
+		}
 	}
-	//debugLog.Println(len(posArr), startPos, endPos)
-	if endPos == 0 {
+
+	if endPos <= 0 {
 		endPos = startPos + maxReadSize
 		if endPos > int(file.UncompressedSize64) {
 			endPos = int(file.UncompressedSize64)
@@ -247,12 +255,7 @@ func (this *ZipHandle) DealWithRangeFile(w http.ResponseWriter, r *http.Request,
 	} else {
 		endPos = endPos + 1
 	}
-	var contentType string
-	if strings.HasSuffix(file.Name, ".mp4") {
-		contentType = "video/mp4"
-	} else if strings.HasSuffix(file.Name, ".mp3") {
-		contentType = "audio/mp3"
-	}
+
 	size := endPos - startPos
 	data := make([]byte, size)
 	debugLog.Println("ZipHandle) DealWithRangeFile---", file.Name, startPos, endPos)
@@ -264,12 +267,13 @@ func (this *ZipHandle) DealWithRangeFile(w http.ResponseWriter, r *http.Request,
 		debugLog.Println("ZipHandle) DealWithRangeFile---rLen != size", rLen, size)
 	}
 	if size > 0 {
+		w.Header().Add("Content-Type", "application/octet-stream")
 		w.Header().Add("Accept-Ranges", "bytes")
 		w.Header().Add("Content-Length", strconv.Itoa(rLen))
 		w.Header().Add("Content-Range", "bytes "+strconv.Itoa(startPos)+"-"+strconv.Itoa(startPos+rLen-1)+"/"+strconv.Itoa(int(file.UncompressedSize64)))
 		w.WriteHeader(206)
 	}
-	w.Header().Add("Content-Type", contentType)
+
 	debugLog.Println(w.Header(), file.Name)
 	w.Write(data[:rLen])
 }
